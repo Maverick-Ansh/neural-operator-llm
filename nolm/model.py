@@ -13,7 +13,8 @@ separates "the operator actually uses the long context" from "the model is
 merely not broken by it".
 """
 
-from dataclasses import dataclass, asdict, field
+import math
+from dataclasses import dataclass, asdict
 
 import torch
 import torch.nn as nn
@@ -119,11 +120,10 @@ class NOLM(nn.Module):
         self.apply(self._init)
         # Scale residual-output projections by 1/sqrt(2*L) so the residual stream
         # variance stays O(1) with depth (GPT-2 initialisation).
-        import math
         scale = 1.0 / math.sqrt(2 * cfg.n_layers)
         for n, p in self.named_parameters():
             if n.endswith("out_proj.weight") or n.endswith("w3.weight"):
-                torch.nn.init.normal_(p, mean=0.0, std=0.02 * scale * (cfg.d_model ** 0.0))
+                torch.nn.init.normal_(p, mean=0.0, std=0.02 * scale)
 
     @staticmethod
     def _init(m):
