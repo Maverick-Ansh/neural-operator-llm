@@ -29,6 +29,11 @@ def style(name):
     return STYLE.get(name, dict(color="#333333", marker="x", label=name))
 
 
+def fmt_len(L):
+    """1024 -> '1K'; anything smaller keeps its exact value rather than '0K'."""
+    return f"{L // 1024}K" if L >= 1024 and L % 1024 == 0 else str(L)
+
+
 def load_reports(results_dir):
     out = {}
     for p in sorted(glob.glob(os.path.join(results_dir, "*.json"))):
@@ -172,7 +177,7 @@ def summary_table(reports, out, train_len=2048):
     lines.append("### Bits per byte vs. evaluation context length\n")
     lengths = sorted({d["length"] for r in reports.values()
                       for d in r.get("bpb_vs_length", [])})
-    head = "| model | params | " + " | ".join(f"{L//1024}K" for L in lengths) + " |"
+    head = "| model | params | " + " | ".join(fmt_len(L) for L in lengths) + " |"
     lines += [head, "|" + "---|" * (len(lengths) + 2)]
     for n, r in reports.items():
         by = {d["length"]: d for d in r.get("bpb_vs_length", [])}
@@ -201,7 +206,7 @@ def summary_table(reports, out, train_len=2048):
             lines.append(f"| {style(n)['label']} | " + " | ".join(cells) + " |")
 
     lines.append("\n### Cost at long context\n")
-    lines += ["| model | " + " | ".join(f"{L//1024}K s/fwd" for L in lengths) + " |",
+    lines += ["| model | " + " | ".join(f"{fmt_len(L)} s/fwd" for L in lengths) + " |",
               "|" + "---|" * (len(lengths) + 1)]
     for n, r in reports.items():
         by = {d["length"]: d for d in r.get("cost_vs_length", [])}
