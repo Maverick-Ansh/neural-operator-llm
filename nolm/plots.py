@@ -38,10 +38,29 @@ def load_reports(results_dir):
     out = {}
     for p in sorted(glob.glob(os.path.join(results_dir, "*.json"))):
         n = os.path.splitext(os.path.basename(p))[0]
-        if n == "summary":
+        if n in ("summary", "digest"):
             continue
-        out[n] = json.load(open(p))
+        out[n] = json.load(open(p, encoding="utf-8"))
     return out
+
+
+def load_digest(path):
+    """Load the compact digest produced by `scripts/digest.py`.
+
+    The digest is what travels off the training machine when the full reports
+    are too large to move, so every figure must be reproducible from it alone.
+    Returns (reports, training_curves) in the same shapes the figure functions
+    already expect.
+    """
+    d = json.load(open(path, encoding="utf-8"))
+    reports = {}
+    for name, m in d["models"].items():
+        r = dict(m)
+        if "kernel" in m:                       # re-wrap into the reports layout
+            r["kernels"] = [m["kernel"]]
+        reports[name] = r
+    training = {n: v.get("valid", []) for n, v in d.get("training", {}).items()}
+    return reports, training
 
 
 def _finish(ax, path, title, xlabel, ylabel, train_len=None, logx=True):
@@ -131,44 +150,60 @@ def fig_kernel(reports, out):
     another -- this figure is the visual form of test_kernel_is_resolution_invariant.
     """
     r = reports.get("nolm")
-    if not r or "kernels" not in r or not r["kernels"]:
+    if not r or not r.get("kernels"):
         return
-    ks = r["kernels"]
-    pick = ks[len(ks) // 2]
-    curves = pick["curves"]
-    lo, hi = sorted(curves.keys(), key=int)[:2]
+    pick = r["kernels"][len(r["kernels"]) // 2]
 
-    n_show = min(3, len(curves[lo]))
+    # Accept either the full report layout ({"curves": {grid: rows}}) or the
+    # digest layout ({"coarse": rows, "fine": rows}) -- figures must be
+    # reproducible from the digest alone.
+    if "curves" in pick:
+        grids = sorted(pick["curves"].keys(), key=int)
+        lo, hi = grids[0], grids[-1]
+        coarse, fine = pick["curves"][lo], pick["curves"][hi]
+        n_lo, n_hi = int(lo), int(hi)
+    else:
+        coarse, fine = pick["coarse"], pick["fine"]
+        n_lo, n_hi = pick["grid_coarse"], pick["grid_fine"]
+
+    n_show = min(3, len(coarse))
     fig, axes = plt.subplots(1, n_show, figsize=(4.0 * n_show, 3.4), squeeze=False)
     for c in range(n_show):
         ax = axes[0][c]
-        ylo, yhi = curves[lo][c], curves[hi][c]
-        tlo = [i / len(ylo) for i in range(len(ylo))]
-        thi = [i / len(yhi) for i in range(len(yhi))]
-        ax.plot(thi, yhi, lw=2.2, alpha=0.45, color="#1f77b4", label=f"N = {hi}")
-        ax.plot(tlo, ylo, lw=0.9, ls="--", color="#d62728", label=f"N = {lo}")
+        ylo, yhi = coarse[c], fine[c]
+        tlo = [i / (len(ylo) - 1) for i in range(len(ylo))]
+        thi = [i / (len(yhi) - 1) for i in range(len(yhi))]
+        # Fine grid as a line, coarse grid as markers: the markers landing on
+        # the line *is* the resolution-invariance claim, made visible.
+        ax.plot(thi, yhi, lw=1.8, color="#1f77b4", label=f"N = {n_hi:,}", zorder=1)
+        ax.scatter(tlo, ylo, s=14, facecolors="none", edgecolors="#d62728",
+                   lw=0.9, label=f"N = {n_lo:,}", zorder=2)
         ax.set_xlabel("normalised lag  t = m/N"); ax.set_title(f"channel {c}")
         ax.grid(alpha=0.25)
         if c == 0:
             ax.set_ylabel(r"$\kappa(t)$"); ax.legend(fontsize=8)
-    fig.suptitle(f"One continuous kernel, two discretisations  ({pick['layer']})", y=1.02)
+    fig.suptitle(f"One continuous kernel, two discretisations  ({pick.get('layer','')})", y=1.02)
     plt.tight_layout()
     p = os.path.join(out, "fig_kernel.png")
     plt.savefig(p, dpi=150, bbox_inches="tight"); plt.close()
     print("wrote", p)
 
 
-def fig_training(runs_dir, out):
+def fig_training(runs_dir, out, curves=None):
+    """Validation curves, from `runs/*/metrics.jsonl` or from a digest."""
     fig, ax = plt.subplots(figsize=(6.4, 4.2))
-    for d in sorted(glob.glob(os.path.join(runs_dir, "*"))):
-        f = os.path.join(d, "metrics.jsonl")
-        if not os.path.exists(f):
-            continue
-        n = os.path.basename(d)
-        recs = [json.loads(l) for l in open(f) if l.strip()]
-        va = [(r["step"], r["val_bpb"]) for r in recs if r.get("event") == "valid"]
+    if curves is None:
+        curves = {}
+        for d in sorted(glob.glob(os.path.join(runs_dir, "*"))):
+            f = os.path.join(d, "metrics.jsonl")
+            if not os.path.exists(f):
+                continue
+            recs = [json.loads(l) for l in open(f) if l.strip()]
+            curves[os.path.basename(d)] = [[r["step"], r["val_bpb"]]
+                                           for r in recs if r.get("event") == "valid"]
+    for n, va in sorted(curves.items()):
         if va:
-            ax.plot(*zip(*va), **style(n))
+            ax.plot([p[0] for p in va], [p[1] for p in va], **style(n))
     ax.set_xlabel("optimiser step (equal tokens for all runs)")
     ax.set_ylabel("validation bits / byte @ 2048")
     ax.set_title("Training"); ax.grid(alpha=0.25); ax.legend(fontsize=8)
@@ -234,15 +269,20 @@ def main():
     ap.add_argument("--results", default="results")
     ap.add_argument("--runs", default="runs")
     ap.add_argument("--train-len", type=int, default=2048)
+    ap.add_argument("--digest", default=None,
+                    help="render from a digest.json instead of the full reports")
     args = ap.parse_args()
 
-    reports = load_reports(args.results)
+    if args.digest:
+        reports, curves = load_digest(args.digest)
+    else:
+        reports, curves = load_reports(args.results), None
     print("reports:", list(reports))
     fig_bpb(reports, args.results, args.train_len)
     fig_copy(reports, args.results, args.train_len)
     fig_cost(reports, args.results, args.train_len)
     fig_kernel(reports, args.results)
-    fig_training(args.runs, args.results)
+    fig_training(args.runs, args.results, curves)
     print("\n" + summary_table(reports, args.results, args.train_len))
 
 
