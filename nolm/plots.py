@@ -212,6 +212,68 @@ def fig_training(runs_dir, out, curves=None):
     plt.savefig(p, dpi=150); plt.close(); print("wrote", p)
 
 
+PAIRS = [
+    ("nolm", "transformer", "does the operator beat full attention?"),
+    ("nolm", "local", "does the global operator path do anything at all?"),
+    ("nolm", "nolm_fixed", "is resolution-invariant addressing the active ingredient?"),
+    ("nolm", "nolm_as_fixed", "same weights, re-addressed onto absolute lags"),
+]
+
+
+def paired_table(reports, out):
+    """Paired per-window comparison of bpb_tail.
+
+    Every model sees the identical, deterministic sequence of windows, so the
+    per-window losses pair up one-to-one. Differencing them cancels the
+    between-window variance -- which is much larger than the between-model
+    variance -- and turns a visual comparison of two noisy curves into a
+    quantitative one. Reported as mean difference, its standard error, and t.
+    """
+    import math as _m
+    lines = ["\n### Paired comparison of bits/byte (same windows, differenced)\n",
+             "Negative favours the first model. `t` is a paired t-statistic over "
+             "the shared windows; |t| > ~2 is the usual bar for significance.\n"]
+    any_rows = False
+    for a, b, why in PAIRS:
+        if a not in reports or b not in reports:
+            continue
+        ra = {d["length"]: d for d in reports[a].get("bpb_vs_length", [])}
+        rb = {d["length"]: d for d in reports[b].get("bpb_vs_length", [])}
+        lens = sorted(set(ra) & set(rb))
+        rows = []
+        for L in lens:
+            da, db = ra[L], rb[L]
+            va = da.get("tail_per_window") or []
+            vb = db.get("tail_per_window") or []
+            n = min(len(va), len(vb))
+            if da.get("oom") or db.get("oom") or n < 2:
+                rows.append((L, None, None, None))
+                continue
+            d = [va[i] - vb[i] for i in range(n)]
+            mu = sum(d) / n
+            var = sum((x - mu) ** 2 for x in d) / (n - 1)
+            se = _m.sqrt(var / n)
+            rows.append((L, mu, se, (mu / se if se > 0 else float("nan"))))
+        if not rows:
+            continue
+        any_rows = True
+        lines.append(f"\n**{style(a)['label']}  −  {style(b)['label']}** — _{why}_\n")
+        lines.append("| length | Δ bpb | ± stderr | t | n |")
+        lines.append("|---|---|---|---|---|")
+        for (L, mu, se, t), Lk in zip(rows, lens):
+            if mu is None:
+                lines.append(f"| {fmt_len(L)} | — | — | — | — |")
+            else:
+                n = min(len(ra[Lk].get("tail_per_window") or []),
+                        len(rb[Lk].get("tail_per_window") or []))
+                lines.append(f"| {fmt_len(L)} | {mu:+.4f} | {se:.4f} | {t:+.1f} | {n} |")
+    txt = "\n".join(lines) if any_rows else ""
+    if txt:
+        open(os.path.join(out, "paired.md"), "w", encoding="utf-8").write(txt)
+        print("wrote", os.path.join(out, "paired.md"))
+    return txt
+
+
 def summary_table(reports, out, train_len=2048):
     lines = []
     lines.append("### Bits per byte vs. evaluation context length\n")
@@ -257,9 +319,9 @@ def summary_table(reports, out, train_len=2048):
                          (f"{d['sec_per_forward']:.2f}" if d else "--"))
         lines.append(f"| {style(n)['label']} | " + " | ".join(cells) + " |")
 
-    txt = "\n".join(lines)
+    txt = "\n".join(lines) + "\n" + paired_table(reports, out)
     p = os.path.join(out, "summary.md")
-    open(p, "w").write(txt)
+    open(p, "w", encoding="utf-8").write(txt)
     print("wrote", p)
     return txt
 

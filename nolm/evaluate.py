@@ -73,7 +73,7 @@ def per_position_loss(model, x, y, amp=torch.float16):
 # --------------------------------------------------------------------------- #
 @torch.no_grad()
 def bpb_vs_length(model, data, lengths, byte_budget=1_048_576, tail=512,
-                  split="valid", min_windows=32):
+                  split="valid", min_windows=32, paired_cap=128):
     """Sweep evaluation context length, reporting bits/byte two ways.
 
     `min_windows` exists for a statistical reason. A pure byte budget gives 1024
@@ -114,6 +114,12 @@ def bpb_vs_length(model, data, lengths, byte_budget=1_048_576, tail=512,
                 "tail_bytes_measured": done * min(tail, L),
                 "sec_per_window": round((time.time() - t0) / done, 4),
                 "peak_mem_GB": round(torch.cuda.max_memory_allocated() / 1e9, 3),
+                # `sequential_windows` is deterministic and starts at byte 0, so
+                # window i is the *same text* for every model. Keeping the first
+                # few hundred per-window values lets the models be compared with
+                # a paired test, which removes the (large) between-window
+                # variance and is far more sensitive than comparing two means.
+                "tail_per_window": [round(float(v), 5) for v in tm[:paired_cap]],
             })
         out.append(rec)
         print(json.dumps(rec), flush=True)
@@ -177,11 +183,15 @@ def copy_probe(model, data, separations, passage=256, lead=128, trials=24,
             continue
 
         f, s = float(np.mean(first_bits)), float(np.mean(second_bits))
+        gains = np.array(first_bits) - np.array(second_bits)
         rec = {"separation": sep, "total_len": total, "trials": ok,
                "bpb_first_copy": round(f, 4), "bpb_second_copy": round(s, 4),
                "copy_gain_bits": round(f - s, 4),
-               "copy_gain_stderr": round(float(np.std(np.array(first_bits) - np.array(second_bits),
-                                                      ddof=1) / max(np.sqrt(ok), 1)), 4)}
+               "copy_gain_stderr": round(float(np.std(gains, ddof=1) / max(np.sqrt(ok), 1))
+                                         if ok > 1 else 0.0, 4),
+               # The RNG is seeded per call, so trial i uses the same passage and
+               # the same filler for every model: these are paired across models.
+               "gain_per_trial": [round(float(g), 5) for g in gains]}
         results.append(rec)
         print(json.dumps(rec), flush=True)
     return results
