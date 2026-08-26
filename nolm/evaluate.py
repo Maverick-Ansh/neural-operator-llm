@@ -40,9 +40,20 @@ from .model import NOLM, NOLMConfig
 LN2 = math.log(2)
 
 
-def load_model(ckpt_path, device="cuda"):
+def load_model(ckpt_path, device="cuda", override_op_mode=None):
+    """Load a checkpoint, optionally re-addressing its operator kernels.
+
+    `override_op_mode` is the cheapest controlled experiment in this repo. The
+    spectral coefficients are the *same numbers* in both addressing modes -- only
+    the grid they are resampled onto changes. So flipping the mode at load time
+    isolates the effect of resolution-invariant addressing on a fixed set of
+    trained weights, with no retraining and no confound from a different run.
+    """
     ck = torch.load(ckpt_path, map_location=device, weights_only=False)
-    cfg = NOLMConfig(**ck["cfg"])
+    cfg_d = dict(ck["cfg"])
+    if override_op_mode:
+        cfg_d["op_mode"] = override_op_mode
+    cfg = NOLMConfig(**cfg_d)
     model = NOLM(cfg).to(device).eval()
     model.load_state_dict(ck["model"])
     return model, cfg, ck
@@ -223,19 +234,24 @@ def main():
     ap.add_argument("--trials", type=int, default=24)
     ap.add_argument("--split", default="valid")
     ap.add_argument("--skip-copy", action="store_true")
+    ap.add_argument("--override-op-mode", default=None, choices=["stretch", "fixed"],
+                    help="re-address a trained operator onto the other grid")
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
     lengths = [int(v) for v in args.lengths.split(",")]
     seps = [int(v) for v in args.separations.split(",")]
 
-    model, cfg, ck = load_model(args.ckpt)
+    model, cfg, ck = load_model(args.ckpt, override_op_mode=args.override_op_mode)
     data = ByteData(args.data_dir, device="cuda")
     print(json.dumps({"model": args.name, "params": model.num_params(),
                       "cfg": cfg.to_dict(), "train_step": ck.get("step")}), flush=True)
 
     report = {"name": args.name, "params": model.num_params(), "cfg": cfg.to_dict(),
-              "train_step": ck.get("step"), "train_len": cfg.train_len}
+              "train_step": ck.get("step"), "train_len": cfg.train_len,
+              "trained_op_mode": ck["cfg"].get("op_mode"),
+              "eval_op_mode": cfg.op_mode,
+              "op_mode_overridden": bool(args.override_op_mode)}
 
     print("\n--- bits/byte vs evaluation length ---", flush=True)
     report["bpb_vs_length"] = bpb_vs_length(model, data, lengths,
