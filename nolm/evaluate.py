@@ -253,7 +253,8 @@ def main():
         report["kernels"] = kernel_snapshot(model)
 
     # A short unconditional sample, purely as a qualitative sanity check.
-    prompt = torch.tensor([[ord(c) for c in "&lt;page&gt;\n    &lt;title&gt;"]], device="cuda")
+    seed_text = "<page>\n    <title>"
+    prompt = torch.tensor([[ord(c) for c in seed_text]], device="cuda")
     try:
         gen = model.generate(prompt, 400, temperature=0.8, top_k=50)
         report["sample"] = decode(gen[0])
