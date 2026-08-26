@@ -60,14 +60,15 @@ def test_fft_conv_is_not_circular():
 # --------------------------------------------------------------------------- #
 # 2. causality of the whole model
 # --------------------------------------------------------------------------- #
-@pytest.mark.parametrize("variant", ["nolm", "transformer", "local"])
-def test_model_is_causal(variant):
+@pytest.mark.parametrize("variant,op_mode", [
+    ("nolm", "stretch"), ("nolm", "fixed"), ("transformer", "stretch"), ("local", "stretch")])
+def test_model_is_causal(variant, op_mode):
     """Perturb the last token; every earlier logit must be bit-identical.
 
     This is the test that actually protects the perplexity numbers.
     """
     cfg = NOLMConfig(d_model=64, n_layers=4, n_heads=4, train_len=32,
-                     window=8, n_modes=8, variant=variant)
+                     window=8, n_modes=8, variant=variant, op_mode=op_mode)
     m = NOLM(cfg).double().eval()
     idx = torch.randint(0, 256, (2, 32))
 
@@ -82,9 +83,14 @@ def test_model_is_causal(variant):
     assert delta[:, -1].max() > 0, "the perturbation had no effect at all -- test is vacuous"
 
 
-def test_operator_layer_causality_gradient():
-    """Independent check via autograd: d out[i] / d in[j] must be 0 for j > i."""
-    op = SpectralOperatorMixer(16, n_modes=8, mode="stretch", ref_len=32).double()
+@pytest.mark.parametrize("mode", ["stretch", "fixed"])
+def test_operator_layer_causality_gradient(mode):
+    """Independent check via autograd: d out[i] / d in[j] must be 0 for j > i.
+
+    Both addressing modes are checked: `fixed` truncates and zero-pads the
+    kernel, which is a separate code path and a separate chance to leak.
+    """
+    op = SpectralOperatorMixer(16, n_modes=8, mode=mode, ref_len=32).double()
     x = torch.randn(1, 24, 16, dtype=torch.float64, requires_grad=True)
     y = op(x)
     y[0, 10].sum().backward()
@@ -181,10 +187,11 @@ def test_local_attention_ignores_distant_tokens():
 # --------------------------------------------------------------------------- #
 # 5. the model actually runs at a length it was never configured for
 # --------------------------------------------------------------------------- #
-@pytest.mark.parametrize("variant", ["nolm", "local"])
-def test_forward_at_unseen_length(variant):
+@pytest.mark.parametrize("variant,op_mode", [
+    ("nolm", "stretch"), ("nolm", "fixed"), ("local", "stretch")])
+def test_forward_at_unseen_length(variant, op_mode):
     cfg = NOLMConfig(d_model=64, n_layers=4, n_heads=4, train_len=64,
-                     window=16, n_modes=8, variant=variant)
+                     window=16, n_modes=8, variant=variant, op_mode=op_mode)
     m = NOLM(cfg).eval()
     with torch.no_grad():
         for n in (64, 256, 1024):
