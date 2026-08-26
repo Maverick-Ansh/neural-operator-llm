@@ -6,4 +6,4 @@ enwik8*
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
-results/*.png
+# figures are committed: they are the results

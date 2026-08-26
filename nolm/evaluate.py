@@ -201,24 +201,36 @@ def cost_vs_length(model, lengths, reps=3):
 # 4. what the learned kernel looks like at two resolutions
 # --------------------------------------------------------------------------- #
 @torch.no_grad()
-def kernel_snapshot(model, lengths=(2048, 16384), n_channels=6):
+def kernel_snapshot(model, lengths=(2048, 16384), n_channels=3):
     """Dump kappa(t) at two grids to show it is one continuous function.
 
     Undoes the 1/grid quadrature weight so the two curves are directly
     comparable; if the parameterisation is doing what it claims, the coarse
     curve lies exactly on top of the fine one.
+
+    Only the middle operator layer is recorded, and only a few channels: the
+    full sweep across every layer would serialise to tens of megabytes of JSON
+    for a figure that needs three curves.
     """
     from .operators import SpectralOperatorMixer
-    snaps = []
-    for name, mod in model.named_modules():
-        if isinstance(mod, SpectralOperatorMixer):
-            entry = {"layer": name, "curves": {}}
-            for L in lengths:
-                k = mod.op.kernel(L, next(mod.parameters()).device).float() * L
-                entry["curves"][str(L)] = k[:n_channels].cpu().numpy().tolist()
-            entry["decay"] = F.softplus(mod.op.log_decay).detach().cpu().numpy().tolist()
-            snaps.append(entry)
-    return snaps
+    mixers = [(n, m) for n, m in model.named_modules()
+              if isinstance(m, SpectralOperatorMixer)]
+    if not mixers:
+        return []
+    name, mod = mixers[len(mixers) // 2]
+    dev = next(mod.parameters()).device
+
+    entry = {"layer": name, "n_operator_layers": len(mixers), "curves": {}}
+    for L in lengths:
+        k = mod.op.kernel(L, dev).float() * L          # undo the 1/N quadrature weight
+        entry["curves"][str(L)] = [[round(v, 6) for v in row]
+                                   for row in k[:n_channels].cpu().numpy().tolist()]
+    # Per-channel envelope rate across ALL operator layers: cheap, and it shows
+    # how local vs global each channel chose to be.
+    entry["decay_by_layer"] = {
+        n: [round(v, 4) for v in F.softplus(m.op.log_decay).detach().cpu().numpy().tolist()]
+        for n, m in mixers}
+    return [entry]
 
 
 # --------------------------------------------------------------------------- #
