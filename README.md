@@ -504,19 +504,38 @@ git clone https://github.com/Maverick-Ansh/neural-operator-llm
 cd neural-operator-llm
 pip install -r requirements.txt
 
-python -m pytest tests/test_core.py -q          # 13 correctness tests, CPU, ~3s
+python -m pytest tests/test_core.py -q     # 16 correctness tests, CPU, ~3s
 
+# All variants share one budget: 1600 steps x 65,536 bytes = 104.9M bytes.
 python -m nolm.train --variant nolm --op-mode stretch --max-steps 1600 --out runs/nolm
-python -m nolm.train --variant transformer      --max-steps 1600 --out runs/transformer
-python -m nolm.train --variant local            --max-steps 1600 --out runs/local
+python -m nolm.train --variant transformer            --max-steps 1600 --out runs/transformer
+python -m nolm.train --variant local                  --max-steps 1600 --out runs/local
 
 python -m nolm.evaluate --ckpt runs/nolm/final.pt --name nolm
+# same weights, kernel re-addressed onto absolute lags -- no retraining
+python -m nolm.evaluate --ckpt runs/nolm/final.pt --name nolm_as_fixed --override-op-mode fixed
+
 python -m nolm.plots
+```
+
+Do **not** bother training a separate `--op-mode fixed` model at `seq_len == ref_len`:
+the two addressing modes are the same computation there, so it will come out
+bit-identical to `nolm`. Use `--override-op-mode` instead. (This repo learned that the
+expensive way; see the discussion.)
+
+To redraw every figure and table from the published numbers, without a GPU:
+
+```bash
+python -m nolm.plots --slim results/results.json
 ```
 
 enwik8 downloads automatically on first run (~36MB). Every run is checkpointed on a
 wall-clock timer and resumable with `--resume`; metrics stream to append-only
 `runs/<name>/metrics.jsonl`, so an interrupted run still leaves a complete record.
+
+`scripts/` holds the two-GPU orchestration used here: `orchestrate.py` starts the next
+training run the moment a card frees, `run_evals.py` runs the evaluation sweep once
+every gate checkpoint exists, and `digest.py` compresses the reports for transport.
 
 ### Hardware notes
 
