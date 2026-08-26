@@ -118,16 +118,20 @@ long-convolution family (GSS / Hyena), which restores input-dependence that a ba
 linear operator lacks. A depthwise short convolution supplies the sharp local detail
 the band-limited kernel cannot.
 
-### The three models compared
+### The models compared
 
 Everything except the token mixer is shared, so any difference is attributable to the
-mixer alone.
+mixer alone. Every run gets the identical budget: 1,600 steps x 65,536 bytes = 104.9M
+bytes.
 
-| variant | mixer | params |
-|---|---|---|
-| `nolm` | alternating local attention / spectral operator | **30.3M** |
-| `transformer` | full causal attention + RoPE everywhere | 31.3M |
-| `local` | local attention everywhere, no global path | 31.3M |
+| run | mixer | trained at | params |
+|---|---|---|---|
+| `nolm` | alternating local attention / spectral operator | 2,048 | **30.3M** |
+| `transformer` | full causal attention + RoPE everywhere | 2,048 | 31.3M |
+| `local` | local attention everywhere, no global path | 2,048 | 31.3M |
+| `nolm_8k` | as `nolm` | 8,192 | 30.3M |
+| `transformer_8k` | as `transformer` | 8,192 | 31.3M |
+| `nolm_as_fixed` | `nolm`'s weights, kernel re-addressed onto absolute lags | — | 30.3M |
 
 Note NOLM has ~3% **fewer** parameters than its controls, so the comparison is
 conservative rather than flattering.
@@ -528,6 +532,25 @@ _Time and peak memory per forward pass. The O(N log N) advantage is real in time
 ![fig_training.png](results/fig_training.png)
 
 _Validation bits/byte during training; identical 104.9M-byte budget for every run. `nolm_fixed` is hidden underneath `nolm` — they are the same model._
+
+### A sample from the operator model
+
+Seeded with `<page>\n    <title>`, temperature 0.8. Byte-level, ~30M parameters, ~105M bytes of training — it has learned the MediaWiki XML skeleton and locally plausible English, which is about what this budget buys:
+
+```
+<page>
+    <title>HIV/times Category:History]] ([[2003]] - [[2005]])
+
+
+'''Hierarchical References:''' Category:Numerals (category of penalty) (2003)
+
+'''Works - paranormal categories:'''
+none (or doubled references) 
+
+{{start box}}
+{{succession box|title=[[Charter of the United States]]|before=[[Paris]]|years=1913|after=[[Paris]]|years=1923&ndash;1927}}
+{{succession box|title=[[President of the United States of
+```
 
 
 <!-- /RESULTS -->

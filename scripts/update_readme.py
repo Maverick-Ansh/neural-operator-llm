@@ -71,7 +71,7 @@ def main():
             parts.append(f"![{name}](results/{name})\n\n_{cap}_\n")
 
     # A generated text sample, if one was captured.
-    slim = os.path.join(args.results, "slim.json")
+    slim = os.path.join(args.results, "results.json")
     sample = None
     if os.path.exists(slim):
         d = json.load(open(slim, encoding="utf-8"))
