@@ -14,6 +14,7 @@ four models, one free Colab 2×T4 session.
 |---|---|
 | **Does it survive 32× extrapolation?** | **Yes.** 1.427 → 1.452 bpb from 1K to 64K. The RoPE transformer goes 1.344 → **4.952** — it retains almost nothing one doubling past its training length. |
 | **Does it *use* the extra context?** | **No.** Zero long-range retrieval at every distance measured, and its edge over a 128-byte sliding window (~0.01 bpb) *shrinks* with length instead of growing. |
+| **Was it just never asked to?** | **No — tested directly.** Retrained at 8K context on the same token budget: still zero retrieval (every separation \|t\| ≤ 2.0 against its own 2K counterpart). Meanwhile the transformer's cliff moved from 4K to 16K, tracking *its* training length exactly. |
 | **Is resolution invariance the active ingredient?** | **No — it is mildly harmful.** Addressing the kernel in absolute lags beats normalised ones, by more as context grows (t = +4.3 at 64K). |
 | **Is O(N log N) real?** | **In time, yes:** 5.1× faster than attention at 64K. **In memory, no:** 2.2× worse, for implementation reasons stated below. |
 
@@ -249,6 +250,51 @@ not. What a neural operator gives you is a well-posed way to *evaluate the same
 operator at a new resolution*. That is genuinely valuable, and it is why the
 model does not break. It is not a mechanism for using more information.
 
+## Round 3: was the operator simply never asked?
+
+The obvious objection to everything above is that all four models were trained
+at 2,048 bytes, so nothing in the objective ever rewarded using information from
+further away. The operator might be perfectly capable and merely untaught.
+
+So both architectures were retrained at **8,192 bytes** of context on an
+identical token budget (1,600 steps × 65,536 bytes = the same 104.9M bytes, just
+seen in four-times-longer pieces) and put through the same sweep.
+
+**Result 1 — the transformer's cliff moves, exactly.** Trained at 2K it is fine
+at 2K and broken at 4K. Trained at 8K it is fine all the way to 8K (1.554 bpb)
+and broken at 16K (4.037). The failure point tracks the training length with no
+slack at all, which is about as clean a confirmation as one could ask for that
+this is a positional out-of-distribution effect and not some other pathology.
+`fig_train_length.png` is that result in one panel.
+
+**Result 2 — the operator has no cliff at either training length.** 1.489 bpb at
+1K to 1.509 at 64K, flat as before.
+
+**Result 3 — and it still does not retrieve.** This is the answer to the
+objection, and it is a clear no. The 8K-trained operator's copy gain is +0.018
+bits at 512 and negative or zero at every larger separation. Compared trial by
+trial against its own 2K-trained counterpart (the probe is seeded, so the
+passages pair one-to-one), the differences are noise: every separation gives
+|t| ≤ 2.0, and the largest effect anywhere is +0.017 bits. Four times the
+training context bought no retrieval whatsoever.
+
+Meanwhile the 8K transformer still scores +0.382 bits at 512 and +0.194 at
+1,024 — the positive control survives the change of regime, so the probe was
+working on these models too.
+
+"Cannot" rather than "was never taught to" is now the better-supported reading.
+
+**Result 4 — an unexpected reversal.** At the 8K training length the operator
+model is *better* than the transformer in distribution, not worse: 1.508 vs
+1.554 bpb at 8,192, and 1.502 vs 1.515 on the final validation. That flips the
+round-1 ordering. The mechanism is mundane and practical: quadratic attention at
+8K forced the same token budget through a smaller batch and ran at 17.2K tok/s
+against the operator's 25.2K, taking 102 minutes to the operator's 69 for
+identical data. Given a fixed token budget at long context, the cheaper mixer
+simply gets more optimisation done. That is a real argument for spectral mixing
+— just not the argument this project set out to make, and it is about training
+economics rather than about modelling long-range dependencies.
+
 ## Resolution invariance is the wrong prior for text
 
 The `stretch`/`fixed` ablation is the sharpest result here, because both modes
@@ -346,6 +392,8 @@ change that. The interesting follow-ups all attack that specific gap:
 | NOLM weights re-addressed as fixed | 30.3M | 1.425 | 1.433 | 1.445 | 1.454 | 1.436 | 1.429 | 1.444 |
 | NOLM (operator, fixed) | 30.3M | 1.425 | 1.433 | 1.445 | 1.454 | 1.436 | 1.429 | 1.444 |
 | Transformer (RoPE, full attn) | 31.3M | 1.353 | 1.344 | 3.208 | 4.093 | 4.662 | 4.878 | 4.952 |
+| NOLM, trained at 8K | 30.3M | 1.489 | 1.490 | 1.500 | 1.508 | 1.490 | 1.480 | 1.508 |
+| Transformer, trained at 8K | 31.3M | 1.548 | 1.536 | 1.546 | 1.554 | 4.037 | 4.344 | 4.523 |
 
 _bits/byte over the final 512 bytes of each window; all models trained at 2048._
 
@@ -359,6 +407,8 @@ _bits/byte over the final 512 bytes of each window; all models trained at 2048._
 | NOLM weights re-addressed as fixed | +0.029 | -0.011 | -0.027 | -0.011 | -0.005 | -0.047 | -0.007 |
 | NOLM (operator, fixed) | +0.029 | -0.011 | -0.027 | -0.011 | -0.005 | -0.047 | -0.007 |
 | Transformer (RoPE, full attn) | +0.639 | +0.494 | -0.005 | -2.017 | -2.450 | -2.822 | -3.581 |
+| NOLM, trained at 8K | +0.018 | -0.003 | -0.008 | -0.005 | -0.019 | -0.048 | -0.010 |
+| Transformer, trained at 8K | +0.382 | +0.194 | +0.006 | -0.040 | -0.048 | -2.210 | -2.826 |
 
 ### Cost at long context
 
@@ -369,6 +419,8 @@ _bits/byte over the final 512 bytes of each window; all models trained at 2048._
 | NOLM weights re-addressed as fixed | 0.02 | 0.03 | 0.06 | 0.12 | 0.24 | 0.50 | 1.05 |
 | NOLM (operator, fixed) | 0.02 | 0.03 | 0.06 | 0.12 | 0.24 | 0.51 | 1.07 |
 | Transformer (RoPE, full attn) | 0.01 | 0.02 | 0.05 | 0.13 | 0.37 | 1.41 | 5.87 |
+| NOLM, trained at 8K | 0.02 | 0.03 | 0.06 | 0.11 | 0.23 | 0.48 | 1.05 |
+| Transformer, trained at 8K | 0.01 | 0.02 | 0.05 | 0.13 | 0.37 | 1.40 | 5.86 |
 
 ### Paired comparison of bits/byte (same windows, differenced)
 
@@ -457,6 +509,10 @@ _Bits/byte on the final 512 bytes of the window as the evaluation context grows,
 
 _The same data with the collapsed model removed. Note how far the *unpaired* error bars overlap — between-window variance in enwik8 dwarfs the difference between these models, which is why the paired table above is the real test._
 
+![fig_train_length.png](results/fig_train_length.png)
+
+_Round 3: both architectures retrained at 8192 bytes on the same token budget. The transformer's failure point tracks its training length with no slack -- broken at 4K when trained at 2K, broken at 16K when trained at 8K. The operator has no cliff at either._
+
 ![fig_copy_probe.png](results/fig_copy_probe.png)
 
 _Bits saved on the second copy of a planted passage, against the distance between the copies. The transformer's +0.64 bits at 512 is the positive control: it proves the probe detects retrieval when retrieval is there. Every operator variant sits on zero at every distance._
@@ -472,25 +528,6 @@ _Time and peak memory per forward pass. The O(N log N) advantage is real in time
 ![fig_training.png](results/fig_training.png)
 
 _Validation bits/byte during training; identical 104.9M-byte budget for every run. `nolm_fixed` is hidden underneath `nolm` — they are the same model._
-
-### A sample from the operator model
-
-Seeded with `<page>\n    <title>`, temperature 0.8. Byte-level, ~30M parameters, ~105M bytes of training — it has learned the MediaWiki XML skeleton and locally plausible English, which is about what this budget buys:
-
-```
-<page>
-    <title>HIV/times Category:History]] ([[2003]] - [[2005]])
-
-
-'''Hierarchical References:''' Category:Numerals (category of penalty) (2003)
-
-'''Works - paranormal categories:'''
-none (or doubled references) 
-
-{{start box}}
-{{succession box|title=[[Charter of the United States]]|before=[[Paris]]|years=1913|after=[[Paris]]|years=1923&ndash;1927}}
-{{succession box|title=[[President of the United States of
-```
 
 
 <!-- /RESULTS -->

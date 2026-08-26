@@ -22,6 +22,11 @@ STYLE = {
                           label="NOLM weights re-addressed as fixed"),
     "transformer":  dict(color="#d62728", marker="s", label="Transformer (RoPE, full attn)"),
     "local":        dict(color="#7f7f7f", marker="^", label="Local attention only"),
+    # round 3: same architectures, same token budget, trained at 8192 instead of 2048
+    "nolm_8k":        dict(color="#1f77b4", marker="o", ls="--",
+                           label="NOLM, trained at 8K"),
+    "transformer_8k": dict(color="#d62728", marker="s", ls="--",
+                           label="Transformer, trained at 8K"),
 }
 
 
@@ -158,6 +163,41 @@ def fig_bpb(reports, out, train_len=2048):
                 "(the transformer is off-scale above)",
                 "evaluation context length (bytes)",
                 "bits / byte (final 512 bytes of window)", train_len)
+
+
+def fig_trainlen(reports, out):
+    """Does the failure point move when the training length moves?
+
+    Round 3 repeats both architectures at an 8192-byte training context on an
+    identical token budget. If the transformer's collapse is a RoPE
+    out-of-distribution effect and nothing else, its cliff should track its
+    training length exactly -- and the operator's absence of a cliff should be
+    unaffected. Both predictions are visible here in one panel.
+    """
+    want = ["transformer", "transformer_8k", "nolm", "nolm_8k"]
+    have = [n for n in want if n in reports]
+    if len(have) < 3:
+        return
+    fig, ax = plt.subplots(figsize=(7.0, 4.6))
+    for n in have:
+        rows = [d for d in reports[n].get("bpb_vs_length", [])
+                if not d.get("oom") and "bpb_tail" in d]
+        if rows:
+            ax.plot([d["length"] for d in rows], [d["bpb_tail"] for d in rows], **style(n))
+    for L, lab in ((2048, "trained at 2K"), (8192, "trained at 8K")):
+        ax.axvline(L, ls=":", c="k", alpha=0.5, lw=1.2)
+        ax.annotate(lab, xy=(L, ax.get_ylim()[1]), xytext=(-4, -8),
+                    textcoords="offset points", rotation=90, ha="right", va="top",
+                    fontsize=8, alpha=0.75)
+    ax.set_xscale("log", base=2)
+    ax.set_xlabel("evaluation context length (bytes)")
+    ax.set_ylabel("bits / byte (final 512 bytes of window)")
+    ax.set_title("The transformer's cliff tracks its training length.\n"
+                 "The operator has no cliff at either.")
+    ax.grid(alpha=0.25); ax.legend(fontsize=8)
+    plt.tight_layout()
+    p = os.path.join(out, "fig_train_length.png")
+    plt.savefig(p, dpi=150); plt.close(); print("wrote", p)
 
 
 def fig_copy(reports, out, train_len=2048, window=128):
@@ -410,6 +450,7 @@ def main():
         reports, curves = load_reports(args.results), None
     print("reports:", list(reports))
     fig_bpb(reports, args.results, args.train_len)
+    fig_trainlen(reports, args.results)
     fig_copy(reports, args.results, args.train_len)
     fig_cost(reports, args.results, args.train_len)
     fig_kernel(reports, args.results)

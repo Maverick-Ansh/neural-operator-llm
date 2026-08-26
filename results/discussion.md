@@ -60,6 +60,51 @@ not. What a neural operator gives you is a well-posed way to *evaluate the same
 operator at a new resolution*. That is genuinely valuable, and it is why the
 model does not break. It is not a mechanism for using more information.
 
+## Round 3: was the operator simply never asked?
+
+The obvious objection to everything above is that all four models were trained
+at 2,048 bytes, so nothing in the objective ever rewarded using information from
+further away. The operator might be perfectly capable and merely untaught.
+
+So both architectures were retrained at **8,192 bytes** of context on an
+identical token budget (1,600 steps × 65,536 bytes = the same 104.9M bytes, just
+seen in four-times-longer pieces) and put through the same sweep.
+
+**Result 1 — the transformer's cliff moves, exactly.** Trained at 2K it is fine
+at 2K and broken at 4K. Trained at 8K it is fine all the way to 8K (1.554 bpb)
+and broken at 16K (4.037). The failure point tracks the training length with no
+slack at all, which is about as clean a confirmation as one could ask for that
+this is a positional out-of-distribution effect and not some other pathology.
+`fig_train_length.png` is that result in one panel.
+
+**Result 2 — the operator has no cliff at either training length.** 1.489 bpb at
+1K to 1.509 at 64K, flat as before.
+
+**Result 3 — and it still does not retrieve.** This is the answer to the
+objection, and it is a clear no. The 8K-trained operator's copy gain is +0.018
+bits at 512 and negative or zero at every larger separation. Compared trial by
+trial against its own 2K-trained counterpart (the probe is seeded, so the
+passages pair one-to-one), the differences are noise: every separation gives
+|t| ≤ 2.0, and the largest effect anywhere is +0.017 bits. Four times the
+training context bought no retrieval whatsoever.
+
+Meanwhile the 8K transformer still scores +0.382 bits at 512 and +0.194 at
+1,024 — the positive control survives the change of regime, so the probe was
+working on these models too.
+
+"Cannot" rather than "was never taught to" is now the better-supported reading.
+
+**Result 4 — an unexpected reversal.** At the 8K training length the operator
+model is *better* than the transformer in distribution, not worse: 1.508 vs
+1.554 bpb at 8,192, and 1.502 vs 1.515 on the final validation. That flips the
+round-1 ordering. The mechanism is mundane and practical: quadratic attention at
+8K forced the same token budget through a smaller batch and ran at 17.2K tok/s
+against the operator's 25.2K, taking 102 minutes to the operator's 69 for
+identical data. Given a fixed token budget at long context, the cheaper mixer
+simply gets more optimisation done. That is a real argument for spectral mixing
+— just not the argument this project set out to make, and it is about training
+economics rather than about modelling long-range dependencies.
+
 ## Resolution invariance is the wrong prior for text
 
 The `stretch`/`fixed` ablation is the sharpest result here, because both modes

@@ -7,6 +7,8 @@
 | NOLM weights re-addressed as fixed | 30.3M | 1.425 | 1.433 | 1.445 | 1.454 | 1.436 | 1.429 | 1.444 |
 | NOLM (operator, fixed) | 30.3M | 1.425 | 1.433 | 1.445 | 1.454 | 1.436 | 1.429 | 1.444 |
 | Transformer (RoPE, full attn) | 31.3M | 1.353 | 1.344 | 3.208 | 4.093 | 4.662 | 4.878 | 4.952 |
+| NOLM, trained at 8K | 30.3M | 1.489 | 1.490 | 1.500 | 1.508 | 1.490 | 1.480 | 1.508 |
+| Transformer, trained at 8K | 31.3M | 1.548 | 1.536 | 1.546 | 1.554 | 4.037 | 4.344 | 4.523 |
 
 _bits/byte over the final 512 bytes of each window; all models trained at 2048._
 
@@ -20,6 +22,8 @@ _bits/byte over the final 512 bytes of each window; all models trained at 2048._
 | NOLM weights re-addressed as fixed | +0.029 | -0.011 | -0.027 | -0.011 | -0.005 | -0.047 | -0.007 |
 | NOLM (operator, fixed) | +0.029 | -0.011 | -0.027 | -0.011 | -0.005 | -0.047 | -0.007 |
 | Transformer (RoPE, full attn) | +0.639 | +0.494 | -0.005 | -2.017 | -2.450 | -2.822 | -3.581 |
+| NOLM, trained at 8K | +0.018 | -0.003 | -0.008 | -0.005 | -0.019 | -0.048 | -0.010 |
+| Transformer, trained at 8K | +0.382 | +0.194 | +0.006 | -0.040 | -0.048 | -2.210 | -2.826 |
 
 ### Cost at long context
 
@@ -30,3 +34,5 @@ _bits/byte over the final 512 bytes of each window; all models trained at 2048._
 | NOLM weights re-addressed as fixed | 0.02 | 0.03 | 0.06 | 0.12 | 0.24 | 0.50 | 1.05 |
 | NOLM (operator, fixed) | 0.02 | 0.03 | 0.06 | 0.12 | 0.24 | 0.51 | 1.07 |
 | Transformer (RoPE, full attn) | 0.01 | 0.02 | 0.05 | 0.13 | 0.37 | 1.41 | 5.87 |
+| NOLM, trained at 8K | 0.02 | 0.03 | 0.06 | 0.11 | 0.23 | 0.48 | 1.05 |
+| Transformer, trained at 8K | 0.01 | 0.02 | 0.05 | 0.13 | 0.37 | 1.40 | 5.86 |

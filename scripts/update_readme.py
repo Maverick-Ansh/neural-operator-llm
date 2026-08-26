@@ -22,6 +22,11 @@ FIGURES = [
      "The same data with the collapsed model removed. Note how far the *unpaired* "
      "error bars overlap — between-window variance in enwik8 dwarfs the difference "
      "between these models, which is why the paired table above is the real test."),
+    ("fig_train_length.png",
+     "Round 3: both architectures retrained at 8192 bytes on the same token "
+     "budget. The transformer's failure point tracks its training length with no "
+     "slack -- broken at 4K when trained at 2K, broken at 16K when trained at 8K. "
+     "The operator has no cliff at either."),
     ("fig_copy_probe.png",
      "Bits saved on the second copy of a planted passage, against the distance "
      "between the copies. The transformer's +0.64 bits at 512 is the positive "
