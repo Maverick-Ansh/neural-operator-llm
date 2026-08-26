@@ -72,30 +72,47 @@ def per_position_loss(model, x, y, amp=torch.float16):
 # 1. bits/byte as a function of evaluation length
 # --------------------------------------------------------------------------- #
 @torch.no_grad()
-def bpb_vs_length(model, data, lengths, byte_budget=1_048_576, tail=512, split="valid"):
+def bpb_vs_length(model, data, lengths, byte_budget=1_048_576, tail=512,
+                  split="valid", min_windows=32):
+    """Sweep evaluation context length, reporting bits/byte two ways.
+
+    `min_windows` exists for a statistical reason. A pure byte budget gives 1024
+    windows at L=1K but only 16 at L=64K, so `bpb_tail` -- which reads 512 bytes
+    per window -- would be estimated from 512KB at the short end and just 8KB at
+    the long end. The long end of the curve, i.e. the part the whole experiment
+    is about, would be by far the noisiest. Flooring the window count keeps the
+    tail estimate honest, and every point carries a standard error so the reader
+    can see how much of any trend is real.
+    """
     out = []
     for L in lengths:
-        n_windows = max(1, byte_budget // L)
-        tot_all, cnt_all, tot_tail, cnt_tail = 0.0, 0, 0.0, 0
+        n_windows = max(min_windows, byte_budget // L)
+        tot_all, cnt_all = 0.0, 0
+        tail_means = []
         t0 = time.time()
         torch.cuda.reset_peak_memory_stats()
-        oom = False
+        oom, done = False, 0
         try:
             for x, y in data.sequential_windows(split, L, max_windows=n_windows):
                 pl = per_position_loss(model, x, y)
                 tot_all += pl.sum().item(); cnt_all += pl.numel()
                 t = min(tail, L)
-                tot_tail += pl[:, -t:].sum().item(); cnt_tail += t
+                tail_means.append(pl[:, -t:].mean().item() / LN2)
+                done += 1
         except torch.cuda.OutOfMemoryError:
             oom = True
             torch.cuda.empty_cache()
 
-        rec = {"length": L, "windows": n_windows, "oom": oom}
-        if not oom:
+        rec = {"length": L, "windows": done, "requested_windows": n_windows, "oom": oom}
+        if not oom and done:
+            tm = np.array(tail_means)
             rec.update({
                 "bpb_all": round(tot_all / cnt_all / LN2, 4),
-                "bpb_tail": round(tot_tail / cnt_tail / LN2, 4),
-                "sec_per_window": round((time.time() - t0) / n_windows, 4),
+                "bpb_tail": round(float(tm.mean()), 4),
+                "bpb_tail_stderr": round(float(tm.std(ddof=1) / np.sqrt(len(tm)))
+                                         if len(tm) > 1 else 0.0, 4),
+                "tail_bytes_measured": done * min(tail, L),
+                "sec_per_window": round((time.time() - t0) / done, 4),
                 "peak_mem_GB": round(torch.cuda.max_memory_allocated() / 1e9, 3),
             })
         out.append(rec)

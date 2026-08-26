@@ -67,10 +67,15 @@ def fig_bpb(reports, out, train_len=2048):
     ]:
         fig, ax = plt.subplots(figsize=(6.4, 4.2))
         for n, r in reports.items():
-            pts = [(d["length"], d[key]) for d in r.get("bpb_vs_length", [])
-                   if not d.get("oom") and key in d]
-            if pts:
-                ax.plot(*zip(*pts), **style(n))
+            rows = [d for d in r.get("bpb_vs_length", [])
+                    if not d.get("oom") and key in d]
+            if rows:
+                xs = [d["length"] for d in rows]
+                ys = [d[key] for d in rows]
+                # Only bpb_tail carries a stderr; bpb_all averages millions of
+                # positions and its error bar would be invisible anyway.
+                es = [d.get("bpb_tail_stderr", 0) for d in rows] if key == "bpb_tail" else None
+                ax.errorbar(xs, ys, yerr=es, capsize=2, **style(n))
             oom = [d["length"] for d in r.get("bpb_vs_length", []) if d.get("oom")]
             for L in oom:
                 ax.scatter([L], [ax.get_ylim()[1]], marker="x", s=60,
