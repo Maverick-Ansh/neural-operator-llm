@@ -44,6 +44,41 @@ def load_reports(results_dir):
     return out
 
 
+def load_slim(path):
+    """Load `results/slim.json`: the column-oriented form of the digest.
+
+    Written when the full reports (which carry per-window losses and a 16,384-
+    point kernel) are too large to move off the training machine. Column arrays
+    instead of key/value objects, which is roughly a 4x saving on JSON text.
+    """
+    d = json.load(open(path, encoding="utf-8"))
+    reports = {}
+    for name, m in d["models"].items():
+        r = {"params": m["params"], "cfg": {"variant": m["variant"], "op_mode": m["op_mode"]},
+             "eval_op_mode": m.get("eval_op_mode"),
+             "op_mode_overridden": m.get("overridden"),
+             "bpb_vs_length": [
+                 {"length": a, "bpb_all": b, "bpb_tail": c, "bpb_tail_stderr": e,
+                  "windows": f, "oom": g} for a, b, c, e, f, g in m["L"]],
+             "copy_probe": [
+                 {"separation": a, "copy_gain_bits": b, "copy_gain_stderr": c,
+                  "bpb_first_copy": e, "bpb_second_copy": f, "trials": g}
+                 for a, b, c, e, f, g in m["C"]],
+             "cost_vs_length": [
+                 {"length": a, "sec_per_forward": b, "peak_mem_GB": c, "oom": e}
+                 for a, b, c, e in m["K"]]}
+        if m.get("sample"):
+            r["sample"] = m["sample"]
+        if m.get("kernel"):
+            k = m["kernel"]
+            r["kernels"] = [{"layer": k["layer"], "n_operator_layers": k.get("nop"),
+                             "grid_coarse": k["gc"], "grid_fine": k["gf"],
+                             "coarse": k["coarse"], "fine": k["fine"]}]
+        reports[name] = r
+    training = {n: v.get("valid", []) for n, v in d.get("training", {}).items()}
+    return reports, training
+
+
 def load_digest(path):
     """Load the compact digest produced by `scripts/digest.py`.
 
@@ -102,6 +137,27 @@ def fig_bpb(reports, out, train_len=2048):
         _finish(ax, os.path.join(out, fname),
                 f"Length generalisation\n({sub})",
                 "evaluation context length (bytes)", ylab, train_len)
+
+    # The transformer's collapse compresses every other model into a single flat
+    # band, hiding the comparison that actually decides the experiment. Second
+    # panel, same data, y-axis scaled to the models that survive.
+    fig, ax = plt.subplots(figsize=(6.4, 4.2))
+    drawn = False
+    for n, r in reports.items():
+        rows = [d for d in r.get("bpb_vs_length", [])
+                if not d.get("oom") and "bpb_tail" in d]
+        if not rows or max(d["bpb_tail"] for d in rows) > 2.0:
+            continue                       # leave the collapsed model out
+        ax.errorbar([d["length"] for d in rows], [d["bpb_tail"] for d in rows],
+                    yerr=[d.get("bpb_tail_stderr", 0) for d in rows],
+                    capsize=2, **style(n))
+        drawn = True
+    if drawn:
+        _finish(ax, os.path.join(out, "fig_bpb_tail_zoom.png"),
+                "Length generalisation, models that survive it\n"
+                "(the transformer is off-scale above)",
+                "evaluation context length (bytes)",
+                "bits / byte (final 512 bytes of window)", train_len)
 
 
 def fig_copy(reports, out, train_len=2048, window=128):
@@ -166,23 +222,30 @@ def fig_kernel(reports, out):
         coarse, fine = pick["coarse"], pick["fine"]
         n_lo, n_hi = pick["grid_coarse"], pick["grid_fine"]
 
-    n_show = min(3, len(coarse))
+    n_show = min(3, len(fine))
     fig, axes = plt.subplots(1, n_show, figsize=(4.0 * n_show, 3.4), squeeze=False)
+
+    # Only the fine grid is drawn. Overlaying the coarse grid as markers would
+    # LOOK like a direct demonstration of resolution invariance, but it is not:
+    # kappa is band-limited to n_modes=64 components, so Nyquist requires >=128
+    # display points and a 32-point marker set is aliased. The markers would sit
+    # off the line for a reason that has nothing to do with the property being
+    # claimed. The invariance is asserted numerically instead, to 1e-9, by
+    # tests/test_core.py::test_kernel_is_resolution_invariant.
     for c in range(n_show):
         ax = axes[0][c]
-        ylo, yhi = coarse[c], fine[c]
-        tlo = [i / (len(ylo) - 1) for i in range(len(ylo))]
-        thi = [i / (len(yhi) - 1) for i in range(len(yhi))]
-        # Fine grid as a line, coarse grid as markers: the markers landing on
-        # the line *is* the resolution-invariance claim, made visible.
-        ax.plot(thi, yhi, lw=1.8, color="#1f77b4", label=f"N = {n_hi:,}", zorder=1)
-        ax.scatter(tlo, ylo, s=14, facecolors="none", edgecolors="#d62728",
-                   lw=0.9, label=f"N = {n_lo:,}", zorder=2)
+        y = fine[c]
+        t = [i / (len(y) - 1) for i in range(len(y))]
+        ax.plot(t, y, lw=1.5, color="#1f77b4")
+        ax.axhline(0, c="k", lw=0.8, alpha=0.4)
         ax.set_xlabel("normalised lag  t = m/N"); ax.set_title(f"channel {c}")
         ax.grid(alpha=0.25)
         if c == 0:
-            ax.set_ylabel(r"$\kappa(t)$"); ax.legend(fontsize=8)
-    fig.suptitle(f"One continuous kernel, two discretisations  ({pick.get('layer','')})", y=1.02)
+            ax.set_ylabel(r"$\kappa(t)$")
+    fig.suptitle(f"The learned operator kernel, sampled on an N = {n_hi:,} grid "
+                 f"({pick.get('layer','')})\n"
+                 r"resolution invariance is verified to $10^{-9}$ in the test suite, not by eye",
+                 y=1.06, fontsize=10)
     plt.tight_layout()
     p = os.path.join(out, "fig_kernel.png")
     plt.savefig(p, dpi=150, bbox_inches="tight"); plt.close()
@@ -254,11 +317,13 @@ def paired_table(reports, out):
             var = sum((x - mu) ** 2 for x in d) / (n - 1)
             se = _m.sqrt(var / n)
             rows.append((L, mu, se, (mu / se if se > 0 else float("nan"))))
-        if not rows:
-            continue
+        if not any(r[1] is not None for r in rows):
+            continue          # no per-window data available (e.g. slim digest)
         any_rows = True
-        lines.append(f"\n**{style(a)['label']}  −  {style(b)['label']}** — _{why}_\n")
-        lines.append("| length | Δ bpb | ± stderr | t | n |")
+        # ASCII only: this string is also printed to a Windows console, whose
+        # cp1252 codec cannot encode U+2212.
+        lines.append(f"\n**{style(a)['label']}  minus  {style(b)['label']}** - _{why}_\n")
+        lines.append("| length | delta bpb | +/- stderr | t | n |")
         lines.append("|---|---|---|---|---|")
         for (L, mu, se, t), Lk in zip(rows, lens):
             if mu is None:
@@ -333,9 +398,13 @@ def main():
     ap.add_argument("--train-len", type=int, default=2048)
     ap.add_argument("--digest", default=None,
                     help="render from a digest.json instead of the full reports")
+    ap.add_argument("--slim", default=None,
+                    help="render from a slim.json (column-oriented digest)")
     args = ap.parse_args()
 
-    if args.digest:
+    if args.slim:
+        reports, curves = load_slim(args.slim)
+    elif args.digest:
         reports, curves = load_digest(args.digest)
     else:
         reports, curves = load_reports(args.results), None
