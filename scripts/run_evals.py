@@ -23,13 +23,18 @@ def log(msg):
 
 def gpu_worker(root, gpu, jobs, deadline):
     for job in jobs:
-        gate = os.path.join(root, job["gate"])
-        while not os.path.exists(gate):
+        # `gate` may be a list. Every entry must exist before the job starts --
+        # evaluation must not share a card with a still-running training job, or
+        # the two contend for memory and the timing numbers become meaningless.
+        gates = job["gate"] if isinstance(job["gate"], list) else [job["gate"]]
+        paths = [os.path.join(root, g) for g in gates]
+        while not all(os.path.exists(p) for p in paths):
             if time.time() > deadline:
-                log(f"gpu{gpu}: deadline waiting for {job['gate']}, skipping {job['name']}")
+                missing = [g for g, p in zip(gates, paths) if not os.path.exists(p)]
+                log(f"gpu{gpu}: deadline waiting for {missing}, skipping {job['name']}")
                 break
             time.sleep(20)
-        if not os.path.exists(gate):
+        if not all(os.path.exists(p) for p in paths):
             continue
 
         env = dict(os.environ, CUDA_VISIBLE_DEVICES=str(gpu), PYTHONUNBUFFERED="1")
